@@ -1,0 +1,193 @@
+---
+title: "Survival Analysis of Signature Genes"
+output: html_document
+date: '2022-11-28'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r,warning=FALSE,message=FALSE}
+library(survival)
+library(survminer)
+library(pheatmap)
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+```
+
+
+```{r}
+
+# Load clinical data
+clinical <- read.csv("./data/mmc2_clinical_data.csv")
+clinical_sub <- clinical[,c("case_id","vital_status","path_diag_to_last_contact_days","path_diag_to_death_days")]
+#
+for(i in 1:nrow(clinical_sub)){
+  clinical_sub$time[i] <- ifelse(clinical_sub[i,"vital_status"]=="Living",clinical_sub[i,"path_diag_to_last_contact_days"],clinical_sub[i,"path_diag_to_death_days"])
+}
+# Load gene expression data of GBM
+exp <- read.csv("./data/mmc3_expression.csv")
+exp_sub <- exp[,c(2,5:ncol(exp))]
+```
+
+```{r}
+# Exclude IDH mutant patients
+idh_patients <- c("C3L-02041","C3L-02708","C3L-02900","C3L-02984","C3N-00663","C3N-03070")
+# Signature genes
+signature_rna <- c("COL18A1","COL1A2","COL5A1",
+               "COL6A2","COL6A3","CYR61","EMILIN1","IGFBP4",
+               "IGFBP6","LTBP3","PODNL1","SNED1","TGFBI",
+               "THBS1","ASPN","SPON2","COL22A1")
+
+```
+
+```{r}
+plot_RNA_heatmap <- function(input_df,idh_patients,signature){
+  rownames(input_df) <- make.names(input_df[,1],unique = T)
+  input_df <- input_df[,-1] #108 patients
+  input_df <- input_df[rownames(input_df)%in%signature,]
+  colnames(input_df) <- gsub("\\.","-",colnames(input_df))
+  input_df <- input_df[,!colnames(input_df)%in%idh_patients]
+  input_df <- log(input_df)
+  h <- pheatmap(input_df,clustering_distance_rows = "manhattan",clustering_distance_cols  = "manhattan",clustering_method = "ward.D")
+  return(h)
+}
+
+```
+
+```{r,fig.width=14}
+plot_RNA_heatmap(exp_sub,idh_patients,signature_rna)
+```
+
+```{r}
+plot_survival <- function(input_df,clinical_sub,idh_patients,signature){
+  rownames(input_df) <- make.names(input_df[,1],unique = T)
+  input_df <- input_df[,-1] #108 patients
+  input_df <- input_df[rownames(input_df)%in%signature,]
+  colnames(input_df) <- gsub("\\.","-",colnames(input_df))
+  input_df <- input_df[,!colnames(input_df)%in%idh_patients]
+  input_df <- log(input_df)
+  input_df <- as.data.frame(t(input_df))
+  input_df <- na.omit(input_df)
+  input_df$signature <- apply(input_df, 1, mean)
+  input_df$case_id <- rownames(input_df)
+  input_df <- input_df[,c("signature","case_id")]
+  all_df <- merge(input_df,clinical_sub,by="case_id")
+  all_df <- all_df %>%
+    mutate(quantile = ntile(signature, 3))
+  all_df <- all_df[all_df$quantile==1|all_df$quantile==3,]
+  all_df$status1 <- ifelse(all_df$vital_status=="Deceased",1,0)
+  return(all_df)
+}
+
+```
+
+
+
+```{r,fig.align='center',fig.height=7}
+# Survival analysis of Signature expression high patients VS. signature exp. low patients
+rna_all <- plot_survival(exp_sub,clinical_sub,idh_patients,signature_rna)
+fit_e <- survfit(Surv(time, status1) ~ quantile, data = rna_all)
+
+ggsurvplot(fit_e,
+           pval = TRUE,
+           ncensor.plot=TRUE,
+           risk.table.col = "strata", 
+           ggtheme = theme_bw(), 
+           title = "Signature",
+           palette = c("blue", "red2"))
+```
+
+
+```{r}
+
+# hazard ratio, exp(coef) = 1.1287
+cox <- coxph(Surv(time, status1) ~ quantile, data = rna_all)
+cox
+```
+
+```{r}
+# Load protein expression data of GBM
+prot <- read.csv("./data/mmc3_proteome.csv")
+prot_sub <- prot[,c(1,4:ncol(prot))]
+```
+
+```{r}
+# Signature genes, exclude "SPON2" and "COL22A1" because of missingness in proteomics data
+signature_prot <- c("COL18A1","COL1A2","COL5A1",
+                    "COL6A2","COL6A3","CYR61","EMILIN1","IGFBP4",
+                    "IGFBP6","LTBP3","PODNL1","SNED1","TGFBI",
+                    "THBS1","ASPN")
+```
+
+```{r}
+plot_prot_heatmap <- function(input_df,idh_patients,signature){
+  rownames(input_df) <- make.names(input_df[,1],unique = T)
+  input_df <- input_df[,-1] #108 patients
+  input_df <- input_df[rownames(input_df)%in%signature,]
+  colnames(input_df) <- gsub("\\.","-",colnames(input_df))
+  input_df <- input_df[,!colnames(input_df)%in%idh_patients]
+  h <- pheatmap(input_df,clustering_distance_rows = "manhattan",clustering_distance_cols  = "manhattan",clustering_method = "ward.D")
+  return(h)
+}
+```
+
+```{r,fig.width=14}
+plot_prot_heatmap(prot_sub,idh_patients,signature_prot)
+
+```
+
+```{r}
+
+plot_survival_prot <- function(input_df,clinical_sub,idh_patients,signature){
+  rownames(input_df) <- make.names(input_df[,1],unique = T)
+  input_df <- input_df[,-1] #108 patients
+  input_df <- input_df[rownames(input_df)%in%signature,]
+  colnames(input_df) <- gsub("\\.","-",colnames(input_df))
+  input_df <- input_df[,!colnames(input_df)%in%idh_patients]
+  input_df <- as.data.frame(t(input_df))
+  input_df <- na.omit(input_df)
+  input_df$signature <- apply(input_df, 1, mean)
+  input_df$case_id <- rownames(input_df)
+  input_df <- input_df[,c("signature","case_id")]
+  all_df <- merge(input_df,clinical_sub,by="case_id")
+  all_df <- all_df %>%
+    mutate(quantile = ntile(signature, 3))
+  all_df <- all_df[all_df$quantile==1|all_df$quantile==3,]
+  all_df$status1 <- ifelse(all_df$vital_status=="Deceased",1,0)
+  return(all_df)
+}
+
+
+```
+
+```{r,fig.align='center',fig.height=7}
+# Survival analysis of Signature expression high patients VS. signature exp. low patients
+prot_all <- plot_survival_prot(prot_sub,clinical_sub,idh_patients,signature_prot)
+fit_e2 <- survfit(Surv(time, status1) ~ quantile, data = prot_all)
+
+ggsurvplot(fit_e2,
+           pval = TRUE,
+           ncensor.plot=TRUE,
+           risk.table.col = "strata", 
+           ggtheme = theme_bw(), 
+           title = "Signature",
+           palette = c("blue", "red2"))
+
+
+```
+
+```{r}
+# hazard ratio, exp(coef) = 1.1292
+cox_p <- coxph(Surv(time, status1) ~ quantile, data = prot_all)
+cox_p
+```
+
+
+
+
+
+
+
