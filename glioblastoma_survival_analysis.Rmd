@@ -1,7 +1,9 @@
 ---
 title: "Survival Analysis of Signature Genes"
-output: html_document
-date: '2022-11-28'
+output:
+  pdf_document: default
+  html_document: default
+date: "2022-11-28"
 ---
 
 ```{r setup, include=FALSE}
