@@ -1,7 +1,7 @@
 ---
-title: "Survival Analysis of Signature Genes"
+title: "Progression Free Survival Analysis of Signature Genes"
 output: html_document
-date: '2022-11-28'
+date: '2022-12-20'
 ---
 
 ```{r setup, include=FALSE}
@@ -16,19 +16,37 @@ library(dplyr)
 library(tidyverse)
 ```
 
+
+```{r}
+surv_free <- read.table(file = "./data/prog_free_surv.tsv", sep = "\t", header = TRUE)
+surv_free <- surv_free[complete.cases(surv_free), ]
+```
+
 # GBM Survival Analysis using RNA Expression data and Signature Genes
 
 ```{r}
 
 # Load clinical data
-clinical <- read.csv("~/Desktop/updated_gbm/mmc2_clinical_data.csv")
-clinical_sub <- clinical[,c("case_id","vital_status","path_diag_to_last_contact_days","path_diag_to_death_days")]
-#
-for(i in 1:nrow(clinical_sub)){
-  clinical_sub$time[i] <- ifelse(clinical_sub[i,"vital_status"]=="Living",clinical_sub[i,"path_diag_to_last_contact_days"],clinical_sub[i,"path_diag_to_death_days"])
+clinical <- read.csv("./data/mmc2_clinical_data.csv")
+# clinical_sub <- clinical[,c("case_id","vital_status","path_diag_to_last_contact_days","path_diag_to_death_days")]
+clinical_sub <- clinical[,c("case_id", "vital_status")]
+
+# for(i in 1:nrow(clinical_sub)){
+#   clinical_sub$time[i] <- ifelse(clinical_sub[i,"vital_status"]=="Living",clinical_sub[i,"path_diag_to_last_contact_days"],clinical_sub[i,"path_diag_to_death_days"])
+# }
+
+clinical_sub$time <- NA
+for(i in row.names(clinical_sub)){
+  for (j in row.names(surv_free)) {
+    if(clinical_sub[i, "case_id"] == surv_free[j, "Case"]){
+      clinical_sub[i, "time"] <- surv_free[j, "Days.to.Recurrence"]
+    }
+  }
 }
+
+
 # Load gene expression data of GBM
-exp <- read.csv("~/Desktop/updated_gbm/mmc3_expression.csv")
+exp <- read.csv("./data/mmc3_expression.csv")
 exp_sub <- exp[,c(2,5:ncol(exp))]
 ```
 
@@ -61,6 +79,8 @@ rna_in <- plot_RNA_heatmap(exp_sub,idh_patients,signature_rna)
 exp_h <- pheatmap(rna_in,clustering_distance_rows = "manhattan",clustering_distance_cols  = "manhattan",clustering_method = "ward.D")
 exp_h
 ```
+
+
 ## Survival analysis using clusters
 
 ```{r,fig.align='center',fig.height=7}
@@ -68,13 +88,20 @@ exp_h
 exp_h_clust <- cbind(t(rna_in), 
                      cluster = cutree(exp_h$tree_row, k = 2))
 exp_h_clust <- as.data.frame(exp_h_clust)
+
 exp_h_clust$case_id <- rownames(exp_h_clust)
+
+
+## Remove rows from exp_h_clust which does not exist in surv_free file
+exp_h_clust <- exp_h_clust[(exp_h_clust$case_id %in% surv_free$Case), ]
+
+
 clust_all <- merge(exp_h_clust,clinical_sub,by="case_id")
 clust_all$status1 <- ifelse(clust_all$vital_status=="Deceased",1,0)
 fit_exp_clust <- survfit(Surv(time, status1) ~ cluster, data = clust_all)
   ggsurvplot(fit_exp_clust,
            pval = TRUE,
-           ncensor.plot=TRUE,
+           ncensor.plot=FALSE,
            risk.table.col = "strata", 
            ggtheme = theme_bw(), 
            title = "Signature",
@@ -114,11 +141,17 @@ plot_survival <- function(input_df,clinical_sub,idh_patients,signature,tile){
 ```{r,fig.align='center',fig.height=7}
 # Survival analysis of Signature expression high patients VS. signature exp. low patients
 rna_all <- plot_survival(exp_sub,clinical_sub,idh_patients,signature_rna,2)
+
+
+## Remove rows from rna_all which does not exist in surv_free file
+rna_all <- rna_all[(rna_all$case_id %in% surv_free$Case), ]
+
+
 fit_e2 <- survfit(Surv(time, status1) ~ quantile, data = rna_all)
 
 ggsurvplot(fit_e2,
            pval = TRUE,
-           ncensor.plot=TRUE,
+           ncensor.plot=FALSE,
            risk.table.col = "strata", 
            ggtheme = theme_bw(), 
            title = "Signature",
@@ -137,11 +170,16 @@ cox
 ```{r,fig.align='center',fig.height=7}
 # Survival analysis of Signature expression high patients VS. signature exp. low patients
 rna_all3 <- plot_survival(exp_sub,clinical_sub,idh_patients,signature_rna,3)
+
+## Remove rows from rna_all3 which does not exist in surv_free file
+rna_all3 <- rna_all3[(rna_all3$case_id %in% surv_free$Case), ]
+
+
 fit_e3 <- survfit(Surv(time, status1) ~ quantile, data = rna_all3)
 
 ggsurvplot(fit_e3,
            pval = TRUE,
-           ncensor.plot=TRUE,
+           ncensor.plot=FALSE,
            risk.table.col = "strata", 
            ggtheme = theme_bw(), 
            title = "Signature",
@@ -161,11 +199,16 @@ cox3
 ```{r,fig.align='center',fig.height=7}
 # Survival analysis of Signature expression high patients VS. signature exp. low patients
 rna_all4 <- plot_survival(exp_sub,clinical_sub,idh_patients,signature_rna,4)
+
+## Remove rows from rna_all4 which does not exist in surv_free file
+rna_all4 <- rna_all4[(rna_all4$case_id %in% surv_free$Case), ]
+
+
 fit_e4 <- survfit(Surv(time, status1) ~ quantile, data = rna_all4)
 
 ggsurvplot(fit_e4,
            pval = TRUE,
-           ncensor.plot=TRUE,
+           ncensor.plot=FALSE,
            risk.table.col = "strata", 
            ggtheme = theme_bw(), 
            title = "Signature",
@@ -183,7 +226,7 @@ cox4
 
 ```{r}
 # Load protein expression data of GBM
-prot <- read.csv("~/Desktop/updated_gbm/mmc3_proteome.csv")
+prot <- read.csv("./data/mmc3_proteome.csv")
 prot_sub <- prot[,c(1,4:ncol(prot))]
 ```
 
@@ -245,11 +288,16 @@ plot_survival_prot <- function(input_df,clinical_sub,idh_patients,signature,tile
 ```{r,fig.align='center',fig.height=7}
 # Survival analysis of Signature protein expression high patients VS. signature exp. low patients
 prot_all2 <- plot_survival_prot(prot_sub,clinical_sub,idh_patients,signature_prot,2)
+
+## Remove rows from prot_all2 which does not exist in surv_free file
+prot_all2 <- prot_all2[(prot_all2$case_id %in% surv_free$Case), ]
+
+
 fit_p2 <- survfit(Surv(time, status1) ~ quantile, data = prot_all2)
 
 ggsurvplot(fit_p2,
            pval = TRUE,
-           ncensor.plot=TRUE,
+           ncensor.plot=FALSE,
            risk.table.col = "strata", 
            ggtheme = theme_bw(), 
            title = "Signature",
@@ -270,11 +318,16 @@ coxp2
 ```{r,fig.align='center',fig.height=7}
 # Survival analysis of Signature protein expression high patients VS. signature exp. low patients
 prot_all3 <- plot_survival_prot(prot_sub,clinical_sub,idh_patients,signature_prot,3)
+
+## Remove rows from prot_all3 which does not exist in surv_free file
+prot_all3 <- prot_all3[(prot_all3$case_id %in% surv_free$Case), ]
+
+
 fit_p3 <- survfit(Surv(time, status1) ~ quantile, data = prot_all3)
 
 ggsurvplot(fit_p3,
            pval = TRUE,
-           ncensor.plot=TRUE,
+           ncensor.plot=FALSE,
            risk.table.col = "strata", 
            ggtheme = theme_bw(), 
            title = "Signature",
@@ -295,11 +348,16 @@ coxp3
 ```{r,fig.align='center',fig.height=7}
 # Survival analysis of Signature protein expression high patients VS. signature exp. low patients
 prot_all4 <- plot_survival_prot(prot_sub,clinical_sub,idh_patients,signature_prot,4)
+
+## Remove rows from prot_all4 which does not exist in surv_free file
+prot_all4 <- prot_all4[(prot_all4$case_id %in% surv_free$Case), ]
+
+
 fit_p4 <- survfit(Surv(time, status1) ~ quantile, data = prot_all4)
 
 ggsurvplot(fit_p4,
            pval = TRUE,
-           ncensor.plot=TRUE,
+           ncensor.plot=FALSE,
            risk.table.col = "strata", 
            ggtheme = theme_bw(), 
            title = "Signature",
@@ -324,10 +382,15 @@ prot_h_clust <- as.data.frame(prot_h_clust)
 prot_h_clust$case_id <- rownames(prot_h_clust)
 p_clust_all <- merge(prot_h_clust,clinical_sub,by="case_id")
 p_clust_all$status1 <- ifelse(p_clust_all$vital_status=="Deceased",1,0)
+
+## Remove rows from p_clust_all which does not exist in surv_free file
+p_clust_all <- p_clust_all[(p_clust_all$case_id %in% surv_free$Case), ]
+
+
 fit_prot_clust <- survfit(Surv(time, status1) ~ cluster, data = p_clust_all)
   ggsurvplot(fit_prot_clust,
            pval = TRUE,
-           ncensor.plot=TRUE,
+           ncensor.plot=FALSE,
            risk.table.col = "strata", 
            ggtheme = theme_bw(), 
            title = "Signature",
