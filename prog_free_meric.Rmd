@@ -1,0 +1,369 @@
+---
+title: "Survival analysis using progression free data"
+output: html_document
+date: "2022-12-22"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r,warning=FALSE,message=FALSE}
+library(survival)
+library(survminer)
+library(pheatmap)
+library(dplyr)
+library(tidyverse)
+```
+
+```{r}
+# Load gene expression data of GBM
+exp <- read.csv("./data/mmc3_expression.csv")
+exp_sub <- exp[,c(2,5:ncol(exp))]
+exp_sub[1:3,1:3]
+```
+
+```{r}
+# Load progression free survival
+prog_free <-read.table(file = "./data/prog_free_surv.tsv", sep = "\t", header = TRUE)
+head(prog_free)
+```
+
+```{r}
+dim(prog_free)
+```
+
+```{r}
+prog_free_patients <- prog_free$Case
+head(prog_free_patients)
+```
+
+```{r}
+prog_free_surv <- na.omit(prog_free)
+prog_free_surv_pt <- prog_free_surv$Case
+```
+
+```{r}
+prog_free2 <- na.omit(prog_free)
+length(prog_free_surv_pt)
+```
+
+
+```{r}
+# Exclude IDH mutant patients
+idh_patients <- c("C3L-02041","C3L-02708","C3L-02900","C3L-02984","C3N-00663","C3N-03070")
+# Signature genes
+signature_rna <- c("COL18A1","COL1A2","COL5A1",
+               "COL6A2","COL6A3","CYR61","EMILIN1","IGFBP4",
+               "IGFBP6","LTBP3","PODNL1","SNED1","TGFBI",
+               "THBS1","ASPN","SPON2","COL22A1")
+
+```
+
+```{r}
+plot_RNA_heatmap <- function(input_df,idh_patients,signature){
+  rownames(input_df) <- make.names(input_df[,1],unique = T)
+  input_df <- input_df[,-1] #108 patients
+  input_df <- input_df[rownames(input_df)%in%signature,]
+  colnames(input_df) <- gsub("\\.","-",colnames(input_df))
+  input_df <- input_df[,!colnames(input_df)%in%idh_patients]
+  input_df <- log(input_df)
+  return(input_df)
+}
+
+```
+
+
+
+```{r,fig.width=14,fig.height=4}
+rna_in <- plot_RNA_heatmap(exp_sub,idh_patients,signature_rna)
+exp_h <- pheatmap(rna_in,clustering_distance_rows = "manhattan",clustering_distance_cols  = "manhattan",clustering_method = "ward.D")
+exp_h
+```
+### RNA expression data size
+```{r}
+dim(rna_in) # 102 patients 17 signature genes
+```
+
+## Survival analysis using clusters
+
+```{r,fig.align='center'}
+
+exp_h_clust <- cbind(t(rna_in), 
+                     cluster = cutree(exp_h$tree_row, k = 3))
+exp_h_clust <- as.data.frame(exp_h_clust)
+exp_h_clust$Case <- rownames(exp_h_clust)
+clust_all <- merge(exp_h_clust,prog_free2,by="Case")
+clust_all$status1 <- 1
+fit_exp_clust <- survfit(Surv(Days.to.Recurrence, status1) ~ cluster, data = clust_all)
+  ggsurvplot(fit_exp_clust,
+           pval = TRUE,
+           risk.table.col = "strata", 
+           ggtheme = theme_bw(), 
+           title = "Signature",
+           palette = c("blue", "red2","springgreen3"))
+```
+
+```{r}
+
+# hazard ratio, exp(coef) 
+cox_exp <- coxph(Surv(Days.to.Recurrence, status1) ~ cluster, data = clust_all)
+cox_exp
+```
+
+## Survival analysis using tiles
+```{r}
+
+plot_survival <- function(input_df,clinical_data,idh_patients,signature,tile){
+  rownames(input_df) <- make.names(input_df[,1],unique = T)
+  input_df <- input_df[,-1] #108 patients
+  input_df <- input_df[rownames(input_df)%in%signature,]
+  colnames(input_df) <- gsub("\\.","-",colnames(input_df))
+  input_df <- input_df[,!colnames(input_df)%in%idh_patients]
+  input_df <- log(input_df)
+  input_df <- as.data.frame(t(input_df))
+  input_df <- na.omit(input_df)
+  input_df$signature <- apply(input_df, 1, mean)
+  # Tiles using all patients
+  input_df <- input_df %>%
+    mutate(quantile = ntile(signature, tile))
+  input_df <- input_df[input_df$quantile==1|input_df$quantile==tile,]
+  #
+  input_df$Case <- rownames(input_df)
+  input_df <- input_df[,c("signature","Case","quantile")]
+  clinical_data <- na.omit(clinical_data)
+  all_df <- merge(input_df,clinical_data,by="Case")
+  all_df$status1 <- 1
+  return(all_df)
+}
+
+```
+
+# Survival analysis comparing 1st vs 2nd tiles:
+
+```{r,fig.align='center'}
+# Survival analysis of Signature expression high patients VS. signature exp. low patients
+rna_all <- plot_survival(exp_sub,prog_free,idh_patients,signature_rna,2)
+fit_e2 <- survfit(Surv(Days.to.Recurrence, status1) ~ quantile, data = rna_all)
+
+ggsurvplot(fit_e2,
+           pval = TRUE,
+           ncensor.plot=FALSE,
+           risk.table.col = "strata", 
+           ggtheme = theme_bw(), 
+           title = "Signature",
+           palette = c("blue", "red2"))
+```
+
+
+```{r}
+# hazard ratio, exp(coef) 
+cox <- coxph(Surv(Days.to.Recurrence, status1) ~ quantile, data = rna_all)
+cox
+```
+
+```{r,fig.align='center'}
+# Survival analysis of Signature expression high patients VS. signature exp. low patients
+rna_all3 <- plot_survival(exp_sub,prog_free,idh_patients,signature_rna,3)
+fit_e3 <- survfit(Surv(Days.to.Recurrence, status1) ~ quantile, data = rna_all3)
+
+ggsurvplot(fit_e3,
+           pval = TRUE,
+           ncensor.plot=FALSE,
+           risk.table.col = "strata", 
+           ggtheme = theme_bw(), 
+           title = "Signature",
+           palette = c("blue", "red2"))
+```
+
+```{r}
+# hazard ratio, exp(coef) 
+cox3 <- coxph(Surv(Days.to.Recurrence, status1) ~ quantile, data = rna_all3)
+cox3
+```
+
+
+```{r}
+
+# Survival analysis of Signature expression high patients VS. signature exp. low patients
+rna_all4 <- plot_survival(exp_sub,prog_free,idh_patients,signature_rna,4)
+fit_e4 <- survfit(Surv(Days.to.Recurrence, status1) ~ quantile, data = rna_all4)
+
+ggsurvplot(fit_e4,
+           pval = TRUE,
+           ncensor.plot=FALSE,
+           risk.table.col = "strata", 
+           ggtheme = theme_bw(), 
+           title = "Signature",
+           palette = c("blue", "red2"))
+```
+
+```{r}
+# hazard ratio, exp(coef) 
+cox4 <- coxph(Surv(Days.to.Recurrence, status1) ~ quantile, data = rna_all4)
+cox4
+```
+
+# GBM Survival Analysis using Protein Expression data and Signature Genes
+
+```{r}
+# Load protein expression data of GBM
+prot <- read.csv("./data/mmc3_proteome.csv")
+prot_sub <- prot[,c(1,4:ncol(prot))]
+```
+
+```{r}
+# Signature genes, exclude "SPON2" and "COL22A1" because of missingness in proteomics data
+signature_prot <- c("COL18A1","COL1A2","COL5A1",
+                    "COL6A2","COL6A3","CYR61","EMILIN1","IGFBP4",
+                    "IGFBP6","LTBP3","PODNL1","SNED1","TGFBI",
+                    "THBS1","ASPN")
+```
+
+
+```{r}
+plot_prot_heatmap <- function(input_df,idh_patients,signature){
+  rownames(input_df) <- make.names(input_df[,1],unique = T)
+  input_df <- input_df[,-1] #108 patients
+  input_df <- input_df[rownames(input_df)%in%signature,]
+  colnames(input_df) <- gsub("\\.","-",colnames(input_df))
+  input_df <- input_df[,!colnames(input_df)%in%idh_patients]
+  return(input_df)
+}
+```
+
+```{r,fig.width=10, fig.height=3}
+prot_in <- plot_prot_heatmap(prot_sub,idh_patients,signature_prot)
+prot_h <- pheatmap(prot_in,clustering_distance_rows = "manhattan",clustering_distance_cols  = "manhattan",clustering_method = "ward.D")
+prot_h
+
+
+```
+### proteomics data size
+```{r}
+dim(prot_in) # 103 patients 13 signature genes
+```
+
+## Survival analysis using clusters
+
+```{r,fig.align='center'}
+
+prot_h_clust <- cbind(t(prot_in), 
+                     cluster = cutree(prot_h$tree_row, k = 2))
+prot_h_clust <- as.data.frame(prot_h_clust)
+prot_h_clust$Case <- rownames(prot_h_clust)
+prog_free2 <- na.omit(prog_free)
+p_clust_all <- merge(prot_h_clust,prog_free2,by="Case")
+p_clust_all$status1 <- 1
+fit_prot_clust <- survfit(Surv(Days.to.Recurrence, status1) ~ cluster, data = p_clust_all)
+  ggsurvplot(fit_prot_clust,
+           pval = TRUE,
+           #ncensor.plot=TRUE,
+           risk.table.col = "strata", 
+           ggtheme = theme_bw(), 
+           title = "Signature",
+           palette = c("blue", "red2"))
+
+
+```
+
+```{r}
+
+# hazard ratio, exp(coef) 
+coxpc <- coxph(Surv(Days.to.Recurrence, status1) ~ cluster, data = p_clust_all)
+coxpc
+```
+
+## Survival analysis using tiles for Proteomics data
+
+# Survival analysis comparing 1st vs 2nd tiles:
+
+```{r,fig.align='center'}
+# Survival analysis of Signature protein expression high patients VS. signature exp. low patients
+prot_all2 <- plot_survival(prot_sub,prog_free,idh_patients,signature_prot,2)
+fit_p2 <- survfit(Surv(Days.to.Recurrence, status1) ~ quantile, data = prot_all2)
+
+ggsurvplot(fit_p2,
+           pval = TRUE,
+           risk.table.col = "strata", 
+           ggtheme = theme_bw(), 
+           title = "Signature",
+           palette = c("blue", "red2"))
+
+
+```
+
+```{r}
+head(prot_all2)
+```
+
+
+
+
+```{r}
+# hazard ratio, exp(coef) 
+coxp2 <- coxph(Surv(Days.to.Recurrence, status1) ~ quantile, data = prot_all2)
+coxp2
+```
+
+# Survival analysis comparing 1st vs 3rd tiles:
+
+```{r,fig.align='center'}
+# Survival analysis of Signature protein expression high patients VS. signature exp. low patients
+prot_all3 <- plot_survival(prot_sub,prog_free,idh_patients,signature_prot,3)
+fit_p3 <- survfit(Surv(Days.to.Recurrence, status1) ~ quantile, data = prot_all3)
+
+ggsurvplot(fit_p3,
+           pval = TRUE,
+           #ncensor.plot=TRUE,
+           risk.table.col = "strata", 
+           ggtheme = theme_bw(), 
+           title = "Signature",
+           palette = c("blue", "red2"))
+
+
+```
+
+```{r}
+# hazard ratio, exp(coef) 
+coxp3 <- coxph(Surv(Days.to.Recurrence, status1) ~ quantile, data = prot_all3)
+coxp3
+```
+
+# Survival analysis comparing 1st vs 4th tiles:
+
+```{r,fig.align='center'}
+# Survival analysis of Signature protein expression high patients VS. signature exp. low patients
+prot_all4 <- plot_survival(prot_sub,prog_free,idh_patients,signature_prot,4)
+fit_p4 <- survfit(Surv(Days.to.Recurrence, status1) ~ quantile, data = prot_all4)
+
+ggsurvplot(fit_p4,
+           pval = TRUE,
+           #ncensor.plot=TRUE,
+           risk.table.col = "strata", 
+           ggtheme = theme_bw(), 
+           title = "Signature",
+           palette = c("blue", "red2"))
+
+
+```
+
+```{r}
+
+# hazard ratio, exp(coef) 
+coxp4 <- coxph(Surv(Days.to.Recurrence, status1) ~ quantile, data = prot_all4)
+coxp4
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
